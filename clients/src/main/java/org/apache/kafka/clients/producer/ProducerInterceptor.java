@@ -19,6 +19,7 @@ package org.apache.kafka.clients.producer;
 import org.apache.kafka.common.Configurable;
 
 /**
+ * 在消息发送到 broker 前进行拦截、修改
  * A plugin interface that allows you to intercept (and possibly mutate) the records received by the producer before
  * they are published to the Kafka cluster.
  * <p>
@@ -30,6 +31,8 @@ import org.apache.kafka.common.Configurable;
  * the user configures the interceptor with the wrong key and value type parameters, the producer will not throw an exception,
  * just log the errors.
  * <p>
+ *
+ * 拦截器 callback 可能会被多个 send 线程调用，有必要保证线程安全
  * ProducerInterceptor callbacks may be called from multiple threads. Interceptor implementation must ensure thread-safety, if needed.
  */
 public interface ProducerInterceptor<K, V> extends Configurable {
@@ -38,6 +41,9 @@ public interface ProducerInterceptor<K, V> extends Configurable {
      * {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord, Callback)} methods, before key and value
      * get serialized and partition is assigned (if partition is not specified in ProducerRecord).
      * <p>
+     *
+     * 允许在 onSend() 中修改 record 并将修改结果返回
+     * 如果修改了键 KEY，要保证后续消息中相同的旧 KEY 会修改为相同的新 KEY，否则 log compaction 会失效
      * This method is allowed to modify the record, in which case, the new record will be returned. The implication of modifying
      * key/value is that partition assignment (if not specified in ProducerRecord) will be done based on modified key/value,
      * not key/value from the client. Consequently, key and value transformation done in onSend() needs to be consistent:
@@ -65,6 +71,7 @@ public interface ProducerInterceptor<K, V> extends Configurable {
     public ProducerRecord<K, V> onSend(ProducerRecord<K, V> record);
 
     /**
+     * 消息回复了 ACK，onAck() 会先于用户的 message callback 被调用
      * This method is called when the record sent to the server has been acknowledged, or when sending the record fails before
      * it gets sent to the server.
      * <p>

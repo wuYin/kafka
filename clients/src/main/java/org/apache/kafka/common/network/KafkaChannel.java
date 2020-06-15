@@ -30,6 +30,8 @@ import org.apache.kafka.common.utils.Utils;
 
 public class KafkaChannel {
     private final String id;
+    // 封装了 SocketChannel 和 SelectionKey
+    // 网络协议处理层
     private final TransportLayer transportLayer;
     private final Authenticator authenticator;
     private final int maxReceiveSize;
@@ -119,9 +121,11 @@ public class KafkaChannel {
     }
 
     public void setSend(Send send) {
+        // 每次只能绑一个 send，一次发一个
         if (this.send != null)
             throw new IllegalStateException("Attempt to begin a send operation with prior send operation still in progress.");
         this.send = send;
+        // 关注 OP_WRITE 事件
         this.transportLayer.addInterestOps(SelectionKey.OP_WRITE);
     }
 

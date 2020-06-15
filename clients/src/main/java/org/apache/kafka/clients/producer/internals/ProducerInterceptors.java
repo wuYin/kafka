@@ -34,7 +34,7 @@ import java.util.List;
  */
 public class ProducerInterceptors<K, V> implements Closeable {
     private static final Logger log = LoggerFactory.getLogger(ProducerInterceptors.class);
-    private final List<ProducerInterceptor<K, V>> interceptors;
+    private final List<ProducerInterceptor<K, V>> interceptors; // 拦截器链
 
     public ProducerInterceptors(List<ProducerInterceptor<K, V>> interceptors) {
         this.interceptors = interceptors;
@@ -58,6 +58,9 @@ public class ProducerInterceptors<K, V> implements Closeable {
         ProducerRecord<K, V> interceptRecord = record;
         for (ProducerInterceptor<K, V> interceptor : this.interceptors) {
             try {
+                // 注意
+                // 拦截器的处理逻辑抛异常会直接 catch 然后忽略，不会有返回值，也就不会覆盖旧 interceptRecord
+                // 下一个拦截器获取到的 record，是上一个未抛异常的拦截器的返回值
                 interceptRecord = interceptor.onSend(interceptRecord);
             } catch (Exception e) {
                 // do not propagate interceptor exception, log and continue calling other interceptors

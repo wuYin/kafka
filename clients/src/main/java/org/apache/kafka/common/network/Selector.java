@@ -75,26 +75,33 @@ import org.slf4j.LoggerFactory;
  *
  * This class is not thread safe!
  */
+// 封装的 nio.Selector
 public class Selector implements Selectable {
 
     private static final Logger log = LoggerFactory.getLogger(Selector.class);
 
     private final java.nio.channels.Selector nioSelector;
-    private final Map<String, KafkaChannel> channels;
+    private final Map<String, KafkaChannel> channels; // nodeId -> KafkaChannel
+
     private final List<Send> completedSends;
     private final List<NetworkReceive> completedReceives;
-    private final Map<KafkaChannel, Deque<NetworkReceive>> stagedReceives;
+    private final Map<KafkaChannel, Deque<NetworkReceive>> stagedReceives; // 暂存一次 OP_READ 事件处理过程中的全部请求
     private final Set<SelectionKey> immediatelyConnectedKeys;
-    private final List<String> disconnected;
+
+    private final List<String> disconnected; // 记录一次 poll 时发现的断开和新建的连接
     private final List<String> connected;
-    private final List<String> failedSends;
+
+    private final List<String> failedSends; // 记录向哪些 node 发送失败
     private final Time time;
     private final SelectorMetrics sensors;
     private final String metricGrpPrefix;
     private final Map<String, String> metricTags;
-    private final ChannelBuilder channelBuilder;
-    private final Map<String, Long> lruConnections;
+
+    private final ChannelBuilder channelBuilder; // 根据不同认证协议配置，创建不同 TransportLayer，及其对应的 Channel
+
+    private final Map<String, Long> lruConnections; // 记录各连接使用情况，根据空闲时间淘汰
     private final long connectionsMaxIdleNanos;
+
     private final int maxReceiveSize;
     private final boolean metricsPerConnection;
     private long currentTimeNanos;
@@ -150,10 +157,14 @@ public class Selector implements Selectable {
      * @throws IOException if DNS resolution fails on the hostname or if the broker is down
      */
     @Override
+    //
+    // 连接到指定的 broker 地址，创建 KafkaChannel 并注册到 Selector
+    //
     public void connect(String id, InetSocketAddress address, int sendBufferSize, int receiveBufferSize) throws IOException {
         if (this.channels.containsKey(id))
             throw new IllegalStateException("There is already a connection for id " + id);
 
+        // 创建 Client Socket Channel
         SocketChannel socketChannel = SocketChannel.open();
         socketChannel.configureBlocking(false);
         Socket socket = socketChannel.socket();
@@ -165,6 +176,7 @@ public class Selector implements Selectable {
         socket.setTcpNoDelay(true);
         boolean connected;
         try {
+            // 异步建立连接
             connected = socketChannel.connect(address);
         } catch (UnresolvedAddressException e) {
             socketChannel.close();
@@ -173,8 +185,11 @@ public class Selector implements Selectable {
             socketChannel.close();
             throw e;
         }
+
+        // 将此 channel 注册到 selector 上，只关注 OP_CONNECT 事件
         SelectionKey key = socketChannel.register(nioSelector, SelectionKey.OP_CONNECT);
         KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize);
+        // 将 channel 附着在 key 上
         key.attach(channel);
         this.channels.put(id, channel);
 
@@ -230,6 +245,7 @@ public class Selector implements Selectable {
     public void send(Send send) {
         KafkaChannel channel = channelOrFail(send.destination());
         try {
+            // 仅仅只是将 send 绑定到 channel
             channel.setSend(send);
         } catch (CancelledKeyException e) {
             this.failedSends.add(send.destination());
@@ -274,12 +290,15 @@ public class Selector implements Selectable {
 
         /* check ready keys */
         long startSelect = time.nanoseconds();
+
+        // 等待其上所有的 channel 的事件
         int readyKeys = select(timeout);
         long endSelect = time.nanoseconds();
         currentTimeNanos = endSelect;
         this.sensors.selectTime.record(endSelect - startSelect, time.milliseconds());
 
         if (readyKeys > 0 || !immediatelyConnectedKeys.isEmpty()) {
+            // 真正处理网络 IO
             pollSelectionKeys(this.nioSelector.selectedKeys(), false);
             pollSelectionKeys(immediatelyConnectedKeys, true);
         }
@@ -296,6 +315,7 @@ public class Selector implements Selectable {
         while (iterator.hasNext()) {
             SelectionKey key = iterator.next();
             iterator.remove();
+            // 取下附着的 KafkaChannel 数据
             KafkaChannel channel = channel(key);
 
             // register all per-connection metrics at once
@@ -306,26 +326,34 @@ public class Selector implements Selectable {
 
                 /* complete any connections that have finished their handshake (either normally or immediately) */
                 if (isImmediatelyConnected || key.isConnectable()) {
+                    // OP_CONNECT
+                    // 阻塞等待连接完成
                     if (channel.finishConnect()) {
                         this.connected.add(channel.id());
                         this.sensors.connectionCreated.record();
                     } else
+                        // 连接失败则跳过此 channel
                         continue;
                 }
 
                 /* if channel is not ready finish prepare */
                 if (channel.isConnected() && !channel.ready())
+                    // 处理身份验证
                     channel.prepare();
 
                 /* if channel is ready read from any connections that have readable data */
                 if (channel.ready() && key.isReadable() && !hasStagedReceive(channel)) {
                     NetworkReceive networkReceive;
+                    // OP_READ
+                    // 阻塞读取一个完整的 networkReceive
                     while ((networkReceive = channel.read()) != null)
                         addToStagedReceives(channel, networkReceive);
                 }
 
                 /* if channel is ready write to any sockets that have space in their buffer and for which we have data */
                 if (channel.ready() && key.isWritable()) {
+                    // OP_WRITE
+                    // 发送 channel.send
                     Send send = channel.write();
                     if (send != null) {
                         this.completedSends.add(send);

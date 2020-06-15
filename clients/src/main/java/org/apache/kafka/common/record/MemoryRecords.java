@@ -23,6 +23,7 @@ import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.utils.AbstractIterator;
 
 /**
+ * 多条消息的几个，底层为 NIO ByteBuffer 表示
  * A {@link Records} implementation backed by a ByteBuffer.
  */
 public class MemoryRecords implements Records {
@@ -33,31 +34,37 @@ public class MemoryRecords implements Records {
     private final Compressor compressor;
 
     // the write limit for writable buffer, which may be smaller than the buffer capacity
+    // 最多能忘 buffer 写多少字节，可能小于 buffer.capacity()
+    // batch.size
     private final int writeLimit;
 
     // the capacity of the initial buffer, which is only used for de-allocation of writable records
     private final int initialCapacity;
 
     // the underlying buffer used for read; while the records are still writable it is null
+    // 用于保存消息数据的 ByteBuffer，不为空则只读，为空则只写
     private ByteBuffer buffer;
 
     // indicate if the memory records is writable or not (i.e. used for appends or read-only)
+    // 标识 buffer 是只读，或可写
     private boolean writable;
 
     // Construct a writable memory records
+    // 注意 private
     private MemoryRecords(ByteBuffer buffer, CompressionType type, boolean writable, int writeLimit) {
         this.writable = writable;
         this.writeLimit = writeLimit;
         this.initialCapacity = buffer.capacity();
         if (this.writable) {
             this.buffer = null;
-            this.compressor = new Compressor(buffer, type);
+            this.compressor = new Compressor(buffer, type); // 创建 compression.type 类型的 compressor
         } else {
             this.buffer = buffer;
             this.compressor = null;
         }
     }
 
+    // 3 种初始化
     public static MemoryRecords emptyRecords(ByteBuffer buffer, CompressionType type, int writeLimit) {
         return new MemoryRecords(buffer, type, true, writeLimit);
     }
@@ -90,6 +97,7 @@ public class MemoryRecords implements Records {
      * Append a new record and offset to the buffer
      * @return crc of the record
      */
+    // 将消息压缩式地写到 ByteBuffer
     public long append(long offset, long timestamp, byte[] key, byte[] value) {
         if (!writable)
             throw new IllegalStateException("Memory records is not writable");
@@ -114,6 +122,7 @@ public class MemoryRecords implements Records {
      * the checking should be based on the capacity of the initialized buffer rather than the write limit in order
      * to accept this single record.
      */
+    // 估算是否还有空间写入消息
     public boolean hasRoomFor(byte[] key, byte[] value) {
         if (!this.writable)
             return false;
@@ -136,10 +145,12 @@ public class MemoryRecords implements Records {
             compressor.close();
 
             // flip the underlying buffer to be ready for reads
+            // 将 MemoryRecords 的 buffer 指向 compressor 的 buffer
             buffer = compressor.buffer();
             buffer.flip();
 
             // reset the writable flag
+            // 压缩的 buffer 只读
             writable = false;
         }
     }
@@ -149,8 +160,10 @@ public class MemoryRecords implements Records {
      */
     public int sizeInBytes() {
         if (writable) {
+            // 可写：已写数据大小
             return compressor.buffer().position();
         } else {
+            // 可读：当前 buffer 上限
             return buffer.limit();
         }
     }
@@ -218,6 +231,7 @@ public class MemoryRecords implements Records {
         return writable;
     }
 
+    // 迭代器，供 consumer 读取消息
     public static class RecordsIterator extends AbstractIterator<LogEntry> {
         private final ByteBuffer buffer;
         private final DataInputStream stream;

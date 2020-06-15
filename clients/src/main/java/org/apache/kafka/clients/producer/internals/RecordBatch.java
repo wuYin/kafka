@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
  * 
  * This class is not thread safe and external synchronization must be used when modifying it
  */
+// 包装 MemoryRecords 内存缓冲区，异步发送的状态管理
 public final class RecordBatch {
 
     private static final Logger log = LoggerFactory.getLogger(RecordBatch.class);
@@ -39,12 +40,12 @@ public final class RecordBatch {
     public final long createdMs;
     public long drainedMs;
     public long lastAttemptMs;
-    public final MemoryRecords records;
-    public final TopicPartition topicPartition;
-    public final ProduceRequestResult produceFuture;
+    public final MemoryRecords records; // 消息缓冲区
+    public final TopicPartition topicPartition; // 目标 tp
+    public final ProduceRequestResult produceFuture; // latch 模拟的 future
     public long lastAppendTime;
-    private final List<Thunk> thunks;
-    private long offsetCounter = 0L;
+    private final List<Thunk> thunks; // 消息回调队列
+    private long offsetCounter = 0L; // 记录某条消息在 batch 中的 offset
     private boolean retry;
 
     public RecordBatch(TopicPartition tp, MemoryRecords records, long now) {
@@ -63,18 +64,23 @@ public final class RecordBatch {
      * 
      * @return The RecordSend corresponding to this record or null if there isn't sufficient room.
      */
+    // 尝试将 record 追加到 MemoryRecords 缓冲区，返回相对 offset
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, long now) {
         if (!this.records.hasRoomFor(key, value)) {
+            // 当前 batch 已满
             return null;
         } else {
+            // 自增相对偏移量
             long checksum = this.records.append(offsetCounter++, timestamp, key, value);
             this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));
             this.lastAppendTime = now;
+            // 创建本条消息的 future
             FutureRecordMetadata future = new FutureRecordMetadata(this.produceFuture, this.recordCount,
                                                                    timestamp, checksum,
                                                                    key == null ? -1 : key.length,
                                                                    value == null ? -1 : value.length);
             if (callback != null)
+                // 将本条消息的回调入队
                 thunks.add(new Thunk(callback, future));
             this.recordCount++;
             return future;
@@ -94,6 +100,7 @@ public final class RecordBatch {
                   baseOffset,
                   exception);
         // execute callbacks
+        // 逐个调用批量消息的回调
         for (int i = 0; i < this.thunks.size(); i++) {
             try {
                 Thunk thunk = this.thunks.get(i);
@@ -106,18 +113,21 @@ public final class RecordBatch {
                                                                  thunk.future.serializedValueSize());
                     thunk.callback.onCompletion(metadata, null);
                 } else {
-                    thunk.callback.onCompletion(null, exception);
+                    thunk.callback.onCompletion(null, exception); // 两个参数互斥
                 }
             } catch (Exception e) {
                 log.error("Error executing user-provided callback on message for topic-partition {}:", topicPartition, e);
             }
         }
+        // 通知当前批发送成功
         this.produceFuture.done(topicPartition, baseOffset, exception);
     }
 
     /**
      * A callback and the associated FutureRecordMetadata argument to pass to it.
      */
+    // 关联一条消息的 callback 和 future
+    // 在批次收到回复后，从 future 中取出元信息包装为 RecordMetadata 传给 callback
     final private static class Thunk {
         final Callback callback;
         final FutureRecordMetadata future;
@@ -139,6 +149,10 @@ public final class RecordBatch {
      *     <li> the batch is not in retry AND request timeout has elapsed after it is ready (full or linger.ms has reached).
      *     <li> the batch is in retry AND request timeout has elapsed after the backoff period ended.
      * </ol>
+     *
+     * 过期条件
+     * 1. batch 未在重试，就绪后已超时 request timeout
+     * 2. batch 在重试，已经 backoff，还是超时 request timeout
      */
     public boolean maybeExpire(int requestTimeoutMs, long retryBackoffMs, long now, long lingerMs, boolean isFull) {
         boolean expire = false;

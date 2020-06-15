@@ -31,7 +31,7 @@ public final class ProduceRequestResult {
 
     private final CountDownLatch latch = new CountDownLatch(1);
     private volatile TopicPartition topicPartition;
-    private volatile long baseOffset = -1L;
+    private volatile long baseOffset = -1L; // 当前 batch 的第一条消息在目标分区的 offset
     private volatile RuntimeException error;
 
     public ProduceRequestResult() {
@@ -43,16 +43,18 @@ public final class ProduceRequestResult {
      * @param baseOffset The base offset assigned to the record
      * @param error The error that occurred if there was one, or null.
      */
+    // 发送完成，通知所有等待线程
     public void done(TopicPartition topicPartition, long baseOffset, RuntimeException error) {
         this.topicPartition = topicPartition;
         this.baseOffset = baseOffset;
-        this.error = error;
+        this.error = error; // null 则为发送成功，否则失败
         this.latch.countDown();
     }
 
     /**
      * Await the completion of this request
      */
+    // 等待当前 latch 对象 countDown，即等待 done() 调用
     public void await() throws InterruptedException {
         latch.await();
     }
@@ -63,6 +65,7 @@ public final class ProduceRequestResult {
      * @param unit The unit for the max time
      * @return true if the request completed, false if we timed out
      */
+    // 超时等待
     public boolean await(long timeout, TimeUnit unit) throws InterruptedException {
         return latch.await(timeout, unit);
     }

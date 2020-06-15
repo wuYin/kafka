@@ -40,38 +40,45 @@ public interface Producer<K, V> extends Closeable {
      * @param record The record to send
      * @return A future which will eventually contain the response information
      */
+    // 同步发送
     public Future<RecordMetadata> send(ProducerRecord<K, V> record);
 
     /**
      * Send a record and invoke the given callback when the record has been acknowledged by the server
      */
+    // 异步发送
     public Future<RecordMetadata> send(ProducerRecord<K, V> record, Callback callback);
     
     /**
      * Flush any accumulated records from the producer. Blocks until all sends are complete.
      */
+    // 阻塞 flush
     public void flush();
 
     /**
      * Get a list of partitions for the given topic for custom partition assignment. The partition metadata will change
      * over time so this list should not be cached.
      */
+    // 获取 topic 分区数据，用于自己指定分区分配
     public List<PartitionInfo> partitionsFor(String topic);
 
     /**
      * Return a map of metrics maintained by the producer
      */
+    // 指标
     public Map<MetricName, ? extends Metric> metrics();
 
     /**
      * Close this producer
      */
+    // 阻塞关闭
     public void close();
 
     /**
      * Tries to close the producer cleanly within the specified timeout. If the close does not complete within the
      * timeout, fail any pending send requests and force close the producer.
      */
+    // 超时强制关闭
     public void close(long timeout, TimeUnit unit);
 
 }

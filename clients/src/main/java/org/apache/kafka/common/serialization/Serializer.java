@@ -25,6 +25,7 @@ import java.util.Map;
 public interface Serializer<T> extends Closeable {
 
     /**
+     * 序列化执行前配置 Serializer
      * Configure this class.
      * @param configs configs in key/value pairs
      * @param isKey whether is for key or value
@@ -40,6 +41,7 @@ public interface Serializer<T> extends Closeable {
 
 
     /**
+     * 可能会被调用多次，需保证幂等
      * Close this serializer.
      * This method has to be idempotent if the serializer is used in KafkaProducer because it might be called
      * multiple times.

@@ -32,10 +32,13 @@ import org.apache.kafka.common.utils.Utils;
  * <li>If a partition is specified in the record, use it
  * <li>If no partition is specified but a key is present choose a partition based on a hash of the key
  * <li>If no partition or key is present choose a partition in a round-robin fashion
+ * 1. 优先使用 record 指定的 partition
+ * 2. 消息有 KEY 则 hash(KEY)%partitions 得出目标分区，从而保证同一个 KEY 的所有消息落到同一个分区
+ * 3. 消息无 KEY 则轮询分发到各分区
  */
 public class DefaultPartitioner implements Partitioner {
 
-    private final AtomicInteger counter = new AtomicInteger(new Random().nextInt());
+    private final AtomicInteger counter = new AtomicInteger(new Random().nextInt()); // 从随机分区开始
 
     /**
      * A cheap way to deterministically convert a number to a positive value. When the input is
@@ -69,16 +72,20 @@ public class DefaultPartitioner implements Partitioner {
         List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
         int numPartitions = partitions.size();
         if (keyBytes == null) {
+            // 无 KEY
             int nextValue = counter.getAndIncrement();
             List<PartitionInfo> availablePartitions = cluster.availablePartitionsForTopic(topic);
             if (availablePartitions.size() > 0) {
+                // 从有 Leader 的分区中选
                 int part = DefaultPartitioner.toPositive(nextValue) % availablePartitions.size();
                 return availablePartitions.get(part).partition();
             } else {
                 // no partitions are available, give a non-available partition
+                // 分区都没有 leader 则同样 round robin
                 return DefaultPartitioner.toPositive(nextValue) % numPartitions;
             }
         } else {
+            // 有 KEY 则 hash
             // hash the keyBytes to choose a partition
             return DefaultPartitioner.toPositive(Utils.murmur2(keyBytes)) % numPartitions;
         }

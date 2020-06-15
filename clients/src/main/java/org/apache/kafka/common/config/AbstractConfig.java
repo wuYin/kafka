@@ -32,17 +32,21 @@ import java.util.Set;
  * <p>
  * This class holds both the original configuration that was provided as well as the parsed
  */
+// 记录原始配置和解析后的配置
 public class AbstractConfig {
 
     private final Logger log = LoggerFactory.getLogger(getClass());
 
     /* configs for which values have been requested, used to detect unused configs */
+    // 被覆盖的配置项
     private final Set<String> used;
 
     /* the original values passed in by the user */
+    // 用户传入的原始配置
     private final Map<String, ?> originals;
 
     /* the parsed values */
+    // 解析后的配置
     private final Map<String, Object> values;
 
     @SuppressWarnings("unchecked")
@@ -52,6 +56,8 @@ public class AbstractConfig {
             if (!(key instanceof String))
                 throw new ConfigException(key.toString(), originals.get(key), "Key must be a string.");
         this.originals = (Map<String, ?>) originals;
+
+        // 配置校验
         this.values = definition.parse(this.originals);
         this.used = Collections.synchronizedSet(new HashSet<String>());
         if (doLog)
@@ -214,6 +220,7 @@ public class AbstractConfig {
      * @param t The interface the class should implement
      * @return The list of configured instances
      */
+    // 获取 key 配置的类，校验实现或继承 t
     public <T> List<T> getConfiguredInstances(String key, Class<T> t) {
         List<String> klasses = getList(key);
         List<T> objects = new ArrayList<T>();

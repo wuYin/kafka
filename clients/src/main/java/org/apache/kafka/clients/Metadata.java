@@ -28,25 +28,31 @@ import org.slf4j.LoggerFactory;
 /**
  * A class encapsulating some of the logic around metadata.
  * <p>
+ *
+ * Metadata 封装了元数据操作，被会被主线程、sender 线程共享使用，所以需要保证线程安全
  * This class is shared by the client thread (for partitioning) and the background sender thread.
- * 
+ *
+ * Metadata 初始化为空，当 topic 元数据不存在时触发添加或更新
  * Metadata is maintained for only a subset of topics, which can be added to over time. When we request metadata for a
  * topic we don't have any metadata for it will trigger a metadata update.
  */
+// 包装集群元数据 Cluster 的读写请求
 public final class Metadata {
 
     private static final Logger log = LoggerFactory.getLogger(Metadata.class);
 
-    private final long refreshBackoffMs;
-    private final long metadataExpireMs;
-    private int version;
-    private long lastRefreshMs;
-    private long lastSuccessfulRefreshMs;
-    private Cluster cluster;
-    private boolean needUpdate;
-    private final Set<String> topics;
-    private final List<Listener> listeners;
-    private boolean needMetadataForAllTopics;
+    private final long refreshBackoffMs; // retry.backoff.ms // 刷新元数据重试间隔，默认 100ms
+    private final long metadataExpireMs; // metadata.max.age.ms // 元数据有效期，默认 5min
+    private int version; // 元数据版本号，递增后与旧版本比较，判断更新是否完成
+    private long lastRefreshMs; // 上次更新成功或失败的时间戳
+    private long lastSuccessfulRefreshMs; // 仅成功
+
+    private Cluster cluster; // 只读集群元信息
+
+    private boolean needUpdate; // 要求要更新，触发 Sender 线程更新元数据的条件之一
+    private final Set<String> topics; // 目前已知的所有 topic
+    private final List<Listener> listeners; // 更新 cluster 前调用的 listener 集合
+    private boolean needMetadataForAllTopics; // 是否全部更新 topics 的元数据
 
     /**
      * Create a metadata instance with reasonable defaults
@@ -104,7 +110,7 @@ public final class Metadata {
      */
     public synchronized int requestUpdate() {
         this.needUpdate = true;
-        return this.version;
+        return this.version; // 返回旧版本
     }
 
     /**
@@ -118,14 +124,17 @@ public final class Metadata {
     /**
      * Wait for metadata update until the current version is larger than the last version we know of
      */
+    // 阻塞等待更新完毕
     public synchronized void awaitUpdate(final int lastVersion, final long maxWaitMs) throws InterruptedException {
         if (maxWaitMs < 0) {
             throw new IllegalArgumentException("Max time to wait for metadata updates should not be < 0 milli seconds");
         }
+        // 实现逻辑类似 Thread.join
         long begin = System.currentTimeMillis();
         long remainingWaitMs = maxWaitMs;
         while (this.version <= lastVersion) {
             if (remainingWaitMs != 0)
+                // 等待 sender 线程 notify
                 wait(remainingWaitMs);
             long elapsed = System.currentTimeMillis() - begin;
             if (elapsed >= maxWaitMs)
@@ -164,12 +173,14 @@ public final class Metadata {
     /**
      * Update the cluster metadata
      */
+    // 更新 cluster 的 metadata
     public synchronized void update(Cluster cluster, long now) {
         this.needUpdate = false;
         this.lastRefreshMs = now;
         this.lastSuccessfulRefreshMs = now;
         this.version += 1;
 
+        // 回调通知 listener
         for (Listener listener: listeners)
             listener.onMetadataUpdate(cluster);
 

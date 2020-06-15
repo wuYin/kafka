@@ -332,7 +332,9 @@ public class ProducerConfig extends AbstractConfig {
         return newProperties;
     }
 
+    // 将 props 验证并回填到 CONFIG 全局配置
     ProducerConfig(Map<?, ?> props) {
+        // 直接委托给 AbstractConfig
         super(CONFIG, props);
     }
 

@@ -40,7 +40,7 @@ public class Producer extends Thread {
         this.isAsync = isAsync;
     }
 
-    public void run() {
+    public void produce() {
         int messageNo = 1;
         while (true) {
             String messageStr = "Message_" + messageNo;
@@ -60,6 +60,10 @@ public class Producer extends Thread {
                 }
             }
             ++messageNo;
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+            }
         }
     }
 }

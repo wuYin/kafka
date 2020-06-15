@@ -30,7 +30,7 @@ public class StringSerializer implements Serializer<String> {
         Object encodingValue = configs.get(propertyName);
         if (encodingValue == null)
             encodingValue = configs.get("serializer.encoding");
-        if (encodingValue != null && encodingValue instanceof String)
+        if (encodingValue != null && encodingValue instanceof String) // 序列化前，配置编码方式
             encoding = (String) encodingValue;
     }
 

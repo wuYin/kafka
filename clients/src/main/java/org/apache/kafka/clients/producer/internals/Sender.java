@@ -172,9 +172,11 @@ public class Sender implements Runnable {
     void run(long now) {
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        // 1. 根据 accumulator 的缓存情况，选出要往哪些 node 发消息
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
+        // 2. 有分区没有 leader 则标记为需要强制更新
         if (result.unknownLeadersExist)
             this.metadata.requestUpdate();
 
@@ -183,6 +185,7 @@ public class Sender implements Runnable {
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
+            // 3. 在网络层面检查 node 可用性
             if (!this.client.ready(node, now)) {
                 iter.remove();
                 notReadyTimeout = Math.min(notReadyTimeout, this.client.connectionDelay(node, now));
@@ -190,6 +193,7 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
+        // 4. 获取要发送的 batch 集合
         Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster,
                                                                          result.readyNodes,
                                                                          this.maxRequestSize,
@@ -202,12 +206,15 @@ public class Sender implements Runnable {
             }
         }
 
+        // 5. batch 超时检查
         List<RecordBatch> expiredBatches = this.accumulator.abortExpiredBatches(this.requestTimeout, now);
         // update sensors
         for (RecordBatch expiredBatch : expiredBatches)
             this.sensors.recordErrors(expiredBatch.topicPartition.topic(), expiredBatch.recordCount);
 
         sensors.updateProduceRequestMetrics(batches);
+
+        // 6. 将 batches 包装成 [ClientRequests...]
         List<ClientRequest> requests = createProduceRequests(batches, now);
         // If we have any nodes that are ready to send + have sendable data, poll with 0 timeout so this can immediately
         // loop and try sending more data. Otherwise, the timeout is determined by nodes that have partitions with data
@@ -220,12 +227,14 @@ public class Sender implements Runnable {
             pollTimeout = 0;
         }
         for (ClientRequest request : requests)
+            // 7. 将 request 放入 Channel 缓存
             client.send(request, now);
 
         // if some partitions are already ready to be sent, the select time would be 0;
         // otherwise if some partition already has some data accumulated but not ready yet,
         // the select time will be the time difference between now and its linger expiry time;
         // otherwise the select time will be the time difference between now and the metadata expiry time;
+        // 8. 执行网络 IO
         this.client.poll(pollTimeout, now);
     }
 
@@ -251,18 +260,23 @@ public class Sender implements Runnable {
      */
     private void handleProduceResponse(ClientResponse response, Map<TopicPartition, RecordBatch> batches, long now) {
         int correlationId = response.request().request().header().correlationId();
+
         if (response.wasDisconnected()) {
+            // 1. 因连接断开产生的 response
             log.trace("Cancelled request {} due to node {} being disconnected", response, response.request()
                                                                                                   .request()
                                                                                                   .destination());
+            // 遍历 batch 尝试重新入队，不满足入队条件的则执行回调
             for (RecordBatch batch : batches.values())
                 completeBatch(batch, Errors.NETWORK_EXCEPTION, -1L, Record.NO_TIMESTAMP, correlationId, now);
         } else {
+            // 2. 正常 response
             log.trace("Received produce response from node {} with correlation id {}",
                       response.request().request().destination(),
                       correlationId);
             // if we have a response, parse it
             if (response.hasResponse()) {
+                // 解析 payload
                 ProduceResponse produceResponse = new ProduceResponse(response.responseBody());
                 for (Map.Entry<TopicPartition, ProduceResponse.PartitionResponse> entry : produceResponse.responses().entrySet()) {
                     TopicPartition tp = entry.getKey();
@@ -309,7 +323,9 @@ public class Sender implements Runnable {
             else
                 exception = error.exception();
             // tell the user the result of their request
+            // 发送成功，执行用户回调
             batch.done(baseOffset, timestamp, exception);
+            // 释放内存
             this.accumulator.deallocate(batch);
             if (error != Errors.NONE)
                 this.sensors.recordErrors(batch.topicPartition.topic(), batch.recordCount);
@@ -331,6 +347,7 @@ public class Sender implements Runnable {
     /**
      * Transfer the record batches into a list of produce requests on a per-node basis
      */
+    // 将每个 Client 的 RecordBatch 粘包到一个 ClientRequest
     private List<ClientRequest> createProduceRequests(Map<Integer, List<RecordBatch>> collated, long now) {
         List<ClientRequest> requests = new ArrayList<ClientRequest>(collated.size());
         for (Map.Entry<Integer, List<RecordBatch>> entry : collated.entrySet())
@@ -349,16 +366,22 @@ public class Sender implements Runnable {
             produceRecordsByPartition.put(tp, batch.records.buffer());
             recordsByPartition.put(tp, batch);
         }
+
+        // 正在要发送的 send 数据对象，payload 是各分区的 MemoryRecords 追加
         ProduceRequest request = new ProduceRequest(acks, timeout, produceRecordsByPartition);
         RequestSend send = new RequestSend(Integer.toString(destination),
                                            this.client.nextRequestHeader(ApiKeys.PRODUCE),
                                            request.toStruct());
+
+        // 将 sender 的 handleProduceResponse 封装为 callback 逻辑
+        // 在 NetClient.poll() 中集中调用
         RequestCompletionHandler callback = new RequestCompletionHandler() {
             public void onComplete(ClientResponse response) {
                 handleProduceResponse(response, recordsByPartition, time.milliseconds());
             }
         };
 
+        // acks 与 0 标识是否需要等待响应
         return new ClientRequest(now, acks != 0, send, callback);
     }
 

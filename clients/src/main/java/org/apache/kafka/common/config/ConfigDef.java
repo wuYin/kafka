@@ -66,6 +66,10 @@ import java.util.Set;
  * This class can be used standalone or in combination with {@link AbstractConfig} which provides some additional
  * functionality for accessing configs.
  */
+//
+// 丰富的配置工具类
+// 可指定配置项的名字，类型，默认值，文档，分组，组内位置，配置值类型宽度，现实名称
+//
 public class ConfigDef {
 
     public static final Object NO_DEFAULT_VALUE = new String("");

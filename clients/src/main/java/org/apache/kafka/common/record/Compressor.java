@@ -103,11 +103,14 @@ public class Compressor {
         if (type != CompressionType.NONE) {
             // for compressed records, leave space for the header and the shallow message metadata
             // and move the starting position to the value payload offset
+            // 将 buffer 后移跳过 headers
             buffer.position(initPos + Records.LOG_OVERHEAD + Record.RECORD_OVERHEAD);
         }
 
         // create the stream
+        // 创建 MemoryRecords 的 ByteBuffer 的 stream
         bufferStream = new ByteBufferOutputStream(buffer);
+        // 装饰模式：对 bufferStream 包装上压缩类
         appendStream = wrapForOutput(bufferStream, type, COMPRESSION_DEFAULT_BUFFER_SIZE);
     }
 
@@ -157,6 +160,9 @@ public class Compressor {
     // never be thrown since the underlying ByteBufferOutputStream does not throw IOException;
     // therefore upon encountering this issue we just close the append stream.
 
+    //
+    // 一系列 Put* 方法向 appendStream 写入数据流
+    //
     public void putLong(final long value) {
         try {
             appendStream.writeLong(value);
@@ -217,6 +223,8 @@ public class Compressor {
         return putRecord(timestamp, key, value, CompressionType.NONE, 0, -1);
     }
 
+    // 按照 Record 协议格式，将消息压缩写入到 compressor 的 appendStream 中
+    // 最终写到 MemoryRecords.ByteBuffer
     private void putRecord(final long crc, final byte attributes, final long timestamp, final byte[] key, final byte[] value, final int valueOffset, final int valueSize) {
         maxTimestamp = Math.max(maxTimestamp, timestamp);
         Record.write(this, crc, attributes, timestamp, key, value, valueOffset, valueSize);
@@ -231,6 +239,7 @@ public class Compressor {
         return numRecords;
     }
 
+    // 根据压缩因子，估算压缩体积
     public long estimatedBytesWritten() {
         if (type == CompressionType.NONE) {
             return bufferStream.buffer().position();
@@ -241,15 +250,17 @@ public class Compressor {
     }
 
     // the following two functions also need to be public since they are used in MemoryRecords.iteration
-
+    // 根据不同压缩方式装饰为不同压缩流
     public static DataOutputStream wrapForOutput(ByteBufferOutputStream buffer, CompressionType type, int bufferSize) {
         try {
             switch (type) {
                 case NONE:
                     return new DataOutputStream(buffer);
                 case GZIP:
+                    // 直接使用 JDK 自带的 gzip
                     return new DataOutputStream(new GZIPOutputStream(buffer, bufferSize));
                 case SNAPPY:
+                    // 反射创建实例，在不依赖 snappy 时不必加入 snappy 的依赖包
                     try {
                         OutputStream stream = (OutputStream) snappyOutputStreamSupplier.get().newInstance(buffer, bufferSize);
                         return new DataOutputStream(stream);
@@ -271,6 +282,7 @@ public class Compressor {
         }
     }
 
+    // 同理装饰为对应的解压流
     public static DataInputStream wrapForInput(ByteBufferInputStream buffer, CompressionType type, byte messageVersion) {
         try {
             switch (type) {

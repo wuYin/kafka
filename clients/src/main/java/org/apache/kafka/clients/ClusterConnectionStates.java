@@ -35,6 +35,9 @@ final class ClusterConnectionStates {
      * @param now The current time in MS
      * @return true if we can initiate a new connection
      */
+    // 是否能重连
+    // 1. 状态必须是 DISCONNECTED
+    // 2. 避免频繁重连，重试时间必须大于 backoff
     public boolean canConnect(String id, long now) {
         NodeConnectionState state = nodeState.get(id);
         if (state == null)

@@ -25,18 +25,24 @@ import java.util.Map;
 import java.util.Set;
 
 /**
+ * 成员均为 private final，即只读，线程安全
+ * 字段值无法直接更新，只能创建新 metadata 覆盖更新
  * A representation of a subset of the nodes, topics, and partitions in the Kafka cluster.
  */
 public final class Cluster {
 
     private final boolean isBootstrapConfigured;
-    private final List<Node> nodes;
+    private final List<Node> nodes; // broker 列表
     private final Set<String> unauthorizedTopics;
-    private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
-    private final Map<String, List<PartitionInfo>> partitionsByTopic;
-    private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;
-    private final Map<Integer, List<PartitionInfo>> partitionsByNode;
-    private final Map<Integer, Node> nodesById;
+
+    // 命名方式：valuesByKey，类比 key2Values
+    private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition; // tp -> tp_info
+
+    private final Map<String, List<PartitionInfo>> partitionsByTopic; // t -> [tp_info...]
+    private final Map<String, List<PartitionInfo>> availablePartitionsByTopic; // t -> [leader_tp_info...] // 分区有 leader 即可用
+
+    private final Map<Integer, List<PartitionInfo>> partitionsByNode; // broker -> [tp_info...]
+    private final Map<Integer, Node> nodesById; // broker.id -> broker
 
     /**
      * Create a new cluster with the given nodes and partitions
@@ -49,6 +55,7 @@ public final class Cluster {
         this(false, nodes, partitions, unauthorizedTopics);
     }
 
+    // 根据 bootstrap servers 创建 Cluster 实例
     private Cluster(boolean isBootstrapConfigured,
                     Collection<Node> nodes,
                     Collection<PartitionInfo> partitions,

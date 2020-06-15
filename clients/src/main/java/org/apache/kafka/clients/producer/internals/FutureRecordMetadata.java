@@ -22,10 +22,12 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 /**
  * The future result of a record send
  */
+// 实现 JUC 的 future 接口，实际委托给了所属的 ProduceRequestResult
+// 后者以 RecordBatch 为单位收发消息，即消息按 batch 收发
 public final class FutureRecordMetadata implements Future<RecordMetadata> {
 
-    private final ProduceRequestResult result;
-    private final long relativeOffset;
+    private final ProduceRequestResult result; // 指向消息所在的 batch 的 produceFuture
+    private final long relativeOffset; // 当前消息在 batch 中的相对偏移量
     private final long timestamp;
     private final long checksum;
     private final int serializedKeySize;
